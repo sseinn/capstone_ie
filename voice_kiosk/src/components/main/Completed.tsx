@@ -1,5 +1,5 @@
 // /src/components/main/Completed.tsx
-import checkImage from "@/assets/check.png"; // ✅ 체크 이미지
+import checkImage from "@/assets/Check.png"; // ✅ 체크 이미지
 import Header from "@/components/Header";
 import Character from "@/components/Character";
 import Captions from "@/components/Captions";
