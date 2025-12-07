@@ -5,6 +5,11 @@ import { useKioskStore } from "@/store/kioskStore";
 import type { State } from "@/types/step";
 import usePcmPlayer from "@/hooks/usePcmPlayer";
 
+type WSMessage = {
+  messageType: string;
+  content?: Record<string, unknown>;
+};
+
 export const useKioskSocket = (storeId: string, connect: boolean) => {
   const wsRef = useRef<WebSocket | null>(null);
   const accessToken = useAuthStore((s) => s.accessToken);
@@ -22,12 +27,19 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
 
   const pcmPlayer = usePcmPlayer();
 
+  // 안전한 WebSocket 메시지 전송 함수
+  const sendMessage = (msg: WSMessage) => {
+    if (!wsRef.current) return;
+    if (wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    wsRef.current.send(JSON.stringify(msg));
+    console.log("📤 WebSocket 메시지 전송:", msg);
+  };
+
   useEffect(() => {
     if (!connect || !storeId || !accessToken) return;
 
-    const wsUrl = `${import.meta.env.VITE_WS_BASE_URL}/stores/${storeId}/websocket/kioskSession?accessToken=${encodeURIComponent(
-      accessToken
-    )}`;
+    const wsUrl = `${import.meta.env.VITE_WS_BASE_URL}/stores/${storeId}/websocket/kioskSession?accessToken=${encodeURIComponent(accessToken)}`;
 
     console.log("🔌 WebSocket 연결 시도:", wsUrl);
     const ws = new WebSocket(wsUrl);
@@ -41,23 +53,21 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
     };
 
     ws.onerror = (e) => console.error("⚠️ WebSocket error:", e);
-
-    ws.onclose = (e) =>
-      console.log("❌ WebSocket closed:", e.code, e.reason);
+    ws.onclose = (e) => console.log("❌ WebSocket closed:", e.code, e.reason);
 
     ws.onmessage = (event) => {
       const data = event.data;
 
-      // COMPLETED 상태에서는 PCM과 텍스트 모두 무시
+      // COMPLETED 상태에서는 모든 응답 무시
       if (isCompletedRef.current) return;
 
-      /** 🔊 PCM 스트리밍 */
+      // PCM 처리
       if (data instanceof ArrayBuffer) {
         pcmPlayer.enqueue(data);
         return;
       }
 
-      /** 🔤 JSON 메시지 처리 */
+      // JSON 메시지 처리
       try {
         const json = JSON.parse(data);
         console.log("📩 메시지 수신:", json);
@@ -69,7 +79,7 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
 
           case "OUTPUT_TEXT_CHUNK":
             if (firstChunkRef.current) {
-              setText(""); // 시작 시 기존 문구 삭제
+              setText("");
               firstChunkRef.current = false;
             }
             appendText(json.content.text);
@@ -87,21 +97,17 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
             const next = json.content.to as State;
             console.log(`🔄 상태 변경: ${step} → ${next}`);
             setStep(next);
-
             firstChunkRef.current = true;
 
-            // COMPLETED 도착 → UI만 완료로 변경하고 음성/소켓 무시 모드로 전환
             if (next === "COMPLETED") {
               isCompletedRef.current = true;
               setText("✅ 결제가 완료되었습니다.");
 
-              // 3초 후 Idle 화면을 위해 소켓 종료만 수행
               setTimeout(() => {
                 wsRef.current?.close(1000, "Payment complete");
                 pcmPlayer.stop();
               }, 3000);
             }
-
             break;
           }
 
@@ -113,12 +119,13 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
       }
     };
 
+    // cleanup
     return () => {
       console.log("🔌 WebSocket cleanup");
       ws.close(1000, "Client closed");
       pcmPlayer.stop();
     };
-  }, [connect]);
 
-  return { wsRef, serverReady, pcmPlayer };
+  }, [connect]); 
+  return { wsRef, serverReady, pcmPlayer, sendMessage };
 };

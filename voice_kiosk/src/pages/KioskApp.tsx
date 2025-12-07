@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useKioskSocket } from "@/hooks/useKioskSocket";
 import { useMicStream } from "@/hooks/useMicStream";
 import { useKioskStore } from "@/store/kioskStore";
+import type { State } from "@/types/step";
+
 import MainContent from "@/components/main/MainContent";
 import Idle from "@/components/Idle";
 
@@ -10,50 +12,60 @@ export default function KioskApp() {
   const storeId = import.meta.env.VITE_KIOSK_STORE_ID;
   const [isStarted, setIsStarted] = useState(false);
 
-  const step = useKioskStore((s) => s.step);
+  // kiosk store
+  const step = useKioskStore((s) => s.step) as State;
   const setStep = useKioskStore((s) => s.setStep);
 
+  // WebSocket & Mic
   const { wsRef, serverReady } = useKioskSocket(storeId, isStarted);
   const { startStreaming, stopStreaming } = useMicStream(wsRef);
 
-  // 화면 터치 이벤트
+  // 화면 터치 → 시작
   const handleTouch = () => {
-    if (!isStarted) {
-      setIsStarted(true);
+    // PAYMENT_CONFIRMATION 상태에서 터치 → PROCESS_PAYMENT 전송
+    if (isStarted && step === "PAYMENT_CONFIRMATION") {
+      wsRef.current?.send(
+        JSON.stringify({
+          messageType: "PROCESS_PAYMENT",
+          content: { paymentMethod: "ANY" },
+        })
+      );
       return;
     }
 
-    // 💳 PAYMENT_CONFIRMATION에서 터치하면 → PROCESS_PAYMENT 전송
-    if (step === "PAYMENT_CONFIRMATION" && wsRef.current) {
-      wsRef.current.send(
-        JSON.stringify({
-          messageType: "PROCESS_PAYMENT",
-          content: { paymentMethod: "CARD" },
-        })
-      );
-      console.log("💳 PROCESS_PAYMENT 전송됨 (화면 터치)");
+    if (!isStarted) {
+      setIsStarted(true);
     }
   };
 
+  // 음성 스트리밍 제어
   useEffect(() => {
     if (serverReady) {
-      startStreaming();
+      console.log("SERVER_READY → start mic");
 
-      if (
-        step !== "MENU_SELECTION" &&
-        step !== "PAYMENT_CONFIRMATION" &&
-        step !== "COMPLETED" &&
-        step !== "CANCELLED"
-      ) {
+      if (step !== "COMPLETED" && step !== "CANCELLED") {
+        startStreaming();
+      }
+
+      // 유효 상태 목록만 인정
+      const validStates: State[] = [
+        "MENU_SELECTION",
+        "PAYMENT_CONFIRMATION",
+        "COMPLETED",
+        "CANCELLED",
+      ];
+
+      if (!validStates.includes(step)) {
         setStep("MENU_SELECTION");
       }
     }
 
     return () => {
-      stopStreaming();
+      if (isStarted) stopStreaming();
     };
-  }, [serverReady]);
+  }, [serverReady, isStarted, step, startStreaming, stopStreaming, setStep]);
 
+  // 화면 렌더링
   const renderScreen = () => {
     if (!isStarted || !serverReady) {
       return (
