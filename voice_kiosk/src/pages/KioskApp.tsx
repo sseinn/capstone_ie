@@ -8,55 +8,51 @@ import Idle from "@/components/Idle";
 
 export default function KioskApp() {
   const storeId = import.meta.env.VITE_KIOSK_STORE_ID;
-
   const [isStarted, setIsStarted] = useState(false);
+
   const step = useKioskStore((s) => s.step);
   const setStep = useKioskStore((s) => s.setStep);
-  const setText = useKioskStore((s) => s.setText);
 
   const { wsRef, serverReady } = useKioskSocket(storeId, isStarted);
   const { startStreaming, stopStreaming } = useMicStream(wsRef);
 
-  // 화면 터치 → 시작
+  // 화면 터치 이벤트
   const handleTouch = () => {
-    if (!isStarted) setIsStarted(true);
+    if (!isStarted) {
+      setIsStarted(true);
+      return;
+    }
+
+    // 💳 PAYMENT_CONFIRMATION에서 터치하면 → PROCESS_PAYMENT 전송
+    if (step === "PAYMENT_CONFIRMATION" && wsRef.current) {
+      wsRef.current.send(
+        JSON.stringify({
+          messageType: "PROCESS_PAYMENT",
+          content: { paymentMethod: "CARD" },
+        })
+      );
+      console.log("💳 PROCESS_PAYMENT 전송됨 (화면 터치)");
+    }
   };
 
-  // 서버 준비 완료 → 음성 입력 시작
   useEffect(() => {
     if (serverReady) {
       startStreaming();
 
-      if (step === "CANCELLED" || step === "COMPLETED") return;
-      setStep("MENU_SELECTION");
-    }
-  }, [serverReady]);
-
-  // 🟢 COMPLETED → 3초 뒤 Idle 화면으로 자동 이동
-  useEffect(() => {
-    if (step === "COMPLETED") {
-      setText("✅ 결제가 완료되었습니다.");
-
-      const timer = setTimeout(() => {
-        console.log("🔄 COMPLETED → Idle 화면으로 복귀");
-        setIsStarted(false);
+      if (
+        step !== "MENU_SELECTION" &&
+        step !== "PAYMENT_CONFIRMATION" &&
+        step !== "COMPLETED" &&
+        step !== "CANCELLED"
+      ) {
         setStep("MENU_SELECTION");
-        setText("");
-      }, 3000);
-
-      return () => clearTimeout(timer);
+      }
     }
-  }, [step]);
 
-  // 🔥 isStarted = false → WebSocket + Mic 모두 정리
-  useEffect(() => {
-    if (!isStarted) {
-      console.log("🛑 Idle 상태 → WebSocket 및 마이크 종료");
-
-      wsRef.current?.close(1000, "Go back to idle");
+    return () => {
       stopStreaming();
-    }
-  }, [isStarted]);
+    };
+  }, [serverReady]);
 
   const renderScreen = () => {
     if (!isStarted || !serverReady) {
@@ -68,6 +64,7 @@ export default function KioskApp() {
         />
       );
     }
+
     return <MainContent />;
   };
 

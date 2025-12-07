@@ -18,10 +18,9 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
   const step = useKioskStore((s) => s.step);
 
   const firstChunkRef = useRef(true);
-  const pcmPlayer = usePcmPlayer();
-
-  // COMPLETED 상태 여부 (PCM 차단)
   const isCompletedRef = useRef(false);
+
+  const pcmPlayer = usePcmPlayer();
 
   useEffect(() => {
     if (!connect || !storeId || !accessToken) return;
@@ -31,10 +30,9 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
     )}`;
 
     console.log("🔌 WebSocket 연결 시도:", wsUrl);
-
     const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
     ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
 
     ws.onopen = () => {
       console.log("✅ WebSocket connected");
@@ -43,18 +41,23 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
     };
 
     ws.onerror = (e) => console.error("⚠️ WebSocket error:", e);
-    ws.onclose = (e) => console.log("❌ WebSocket closed:", e.code, e.reason);
+
+    ws.onclose = (e) =>
+      console.log("❌ WebSocket closed:", e.code, e.reason);
 
     ws.onmessage = (event) => {
       const data = event.data;
 
+      // COMPLETED 상태에서는 PCM과 텍스트 모두 무시
+      if (isCompletedRef.current) return;
+
+      /** 🔊 PCM 스트리밍 */
       if (data instanceof ArrayBuffer) {
-        if (!isCompletedRef.current) {
-          pcmPlayer.enqueue(data);
-        }
+        pcmPlayer.enqueue(data);
         return;
       }
 
+      /** 🔤 JSON 메시지 처리 */
       try {
         const json = JSON.parse(data);
         console.log("📩 메시지 수신:", json);
@@ -65,19 +68,15 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
             break;
 
           case "OUTPUT_TEXT_CHUNK":
-            if (!isCompletedRef.current) {
-              if (firstChunkRef.current) {
-                setText("");
-                firstChunkRef.current = false;
-              }
-              appendText(json.content.text);
+            if (firstChunkRef.current) {
+              setText(""); // 시작 시 기존 문구 삭제
+              firstChunkRef.current = false;
             }
+            appendText(json.content.text);
             break;
 
           case "OUTPUT_TEXT_RESULT":
-            if (!isCompletedRef.current) {
-              setText(json.content.text);
-            }
+            setText(json.content.text);
             break;
 
           case "UPDATE_SHOPPING_CART":
@@ -86,34 +85,21 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
 
           case "CHANGE_STATE": {
             const next = json.content.to as State;
-            const prev = step;
-            console.log(`🔄 상태 변경: ${prev} → ${next}`);
-
+            console.log(`🔄 상태 변경: ${step} → ${next}`);
             setStep(next);
+
             firstChunkRef.current = true;
 
-            if (next === "PAYMENT_CONFIRMATION") {
-              console.log("💳 PAYMENT_CONFIRMATION 도달 → PROCESS_PAYMENT 자동 전송");
-
-              const payMsg = {
-                messageType: "PROCESS_PAYMENT",
-                content: { paymentMethod: "AUTO" },
-              };
-
-              wsRef.current?.send(JSON.stringify(payMsg));
-            }
-
+            // COMPLETED 도착 → UI만 완료로 변경하고 음성/소켓 무시 모드로 전환
             if (next === "COMPLETED") {
-              console.log("🎉 COMPLETED 진입 → PCM 차단 + 종료 준비");
-
               isCompletedRef.current = true;
+              setText("✅ 결제가 완료되었습니다.");
 
-              setText("🧾 주문해주셔서 감사합니다.");
-
+              // 3초 후 Idle 화면을 위해 소켓 종료만 수행
               setTimeout(() => {
                 wsRef.current?.close(1000, "Payment complete");
                 pcmPlayer.stop();
-              }, 200);
+              }, 3000);
             }
 
             break;
