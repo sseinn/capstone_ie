@@ -10,11 +10,11 @@ const MIC_WORKER_PATH = "/workers/audioProcessor.js";
 
 // Audio Worklet 파일 경로 (데이터 추출 담당)
 
-const MIC_WORKLET_PATH = "/worklets/micProcessor.js"; 
+const MIC_WORKLET_PATH = "/worklets/micProcessor.js";
 
 
 
-const TARGET_SAMPLE_RATE = 24000;
+const TARGET_SAMPLE_RATE = 16000;
 
 const BUFFER_SIZE = 1024; // Worklet 내의 처리 버퍼 크기 (이전 ScriptProcessorNode의 영향을 받지 않음)
 
@@ -32,7 +32,7 @@ export const useMicStream = (
 
   const portRef = useRef<MessagePort | null>(null);
 
-  
+
 
   // AudioContext 관련 Ref (메인 스레드에서 관리)
 
@@ -40,13 +40,13 @@ export const useMicStream = (
 
   // 💡 AudioWorkletNode로 변경
 
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null); 
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
 
   const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
 
 
-  const isRecordingRef = useRef(false); 
+  const isRecordingRef = useRef(false);
 
   const [isUiRecording, setIsUiRecording] = useState(false);
 
@@ -88,7 +88,7 @@ export const useMicStream = (
 
   }, []);
 
-  
+
 
   // ----------------------------------------------------
 
@@ -138,7 +138,7 @@ export const useMicStream = (
 
       console.log("✅ AudioWorklet module loaded.");
 
-      
+
 
       const mediaStreamSource = audioContext.createMediaStreamSource(stream);
 
@@ -150,7 +150,7 @@ export const useMicStream = (
 
       const workletNode = new AudioWorkletNode(
 
-        audioContext, 
+        audioContext,
 
         'mic-processor', // micProcessor.js에 등록된 이름
 
@@ -182,11 +182,11 @@ export const useMicStream = (
 
           // Worklet에서 받은 Float32Array 데이터를 기존 Web Worker로 전달 (PCM 변환 위임)
 
-          portRef.current?.postMessage({ 
+          portRef.current?.postMessage({
 
-            command: 'PROCESS_CHUNK', 
+            command: 'PROCESS_CHUNK',
 
-            payload: payload 
+            payload: payload
 
           }, [payload]); // Transferable Objects 사용
 
@@ -202,7 +202,7 @@ export const useMicStream = (
 
       // WorkletNode를 destination에 연결해야 Worklet이 작동하기 시작합니다.
 
-      workletNode.connect(audioContext.destination); 
+      workletNode.connect(audioContext.destination);
 
 
 
@@ -210,7 +210,7 @@ export const useMicStream = (
 
       isRecordingRef.current = true;
 
-      setIsUiRecording(true); 
+      setIsUiRecording(true);
 
       console.log("🎙️ Main: Audio streaming started via AudioWorklet.");
 
@@ -236,35 +236,35 @@ export const useMicStream = (
 
     console.log("🛑 Audio streaming stopped by main thread");
 
-    
+
 
     // 1. AudioWorkletNode 해제
 
     if (workletNodeRef.current) {
 
-        workletNodeRef.current.disconnect();
+      workletNodeRef.current.disconnect();
 
-        workletNodeRef.current.port.onmessage = null;
+      workletNodeRef.current.port.onmessage = null;
 
-        workletNodeRef.current = null;
+      workletNodeRef.current = null;
 
     }
 
     if (mediaStreamSourceRef.current) {
 
-        mediaStreamSourceRef.current.disconnect();
+      mediaStreamSourceRef.current.disconnect();
 
-        mediaStreamSourceRef.current = null;
+      mediaStreamSourceRef.current = null;
 
     }
 
     if (audioContextRef.current) {
 
-        audioContextRef.current.close().then(() => {
+      audioContextRef.current.close().then(() => {
 
-            audioContextRef.current = null;
+        audioContextRef.current = null;
 
-        });
+      });
 
     }
 
@@ -276,7 +276,7 @@ export const useMicStream = (
 
     mediaStreamRef.current = null;
 
-    
+
 
     // 💡 상태 업데이트
 
@@ -308,7 +308,7 @@ export const useMicStream = (
 
     portRef.current = channel.port1;
 
-    
+
 
     // Worker로부터 변환된 PCM 데이터를 수신
 
@@ -316,7 +316,7 @@ export const useMicStream = (
 
       const { type, payload } = event.data;
 
-      
+
 
       if (type === 'PCM_CHUNK' && payload instanceof ArrayBuffer) {
 
@@ -324,7 +324,7 @@ export const useMicStream = (
 
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && isRecordingRef.current) {
 
-          wsRef.current.send(payload); 
+          wsRef.current.send(payload);
 
         }
 
@@ -354,7 +354,7 @@ export const useMicStream = (
 
     };
 
-  }, [stopStreaming, wsRef]); 
+  }, [stopStreaming, wsRef]);
 
 
 
