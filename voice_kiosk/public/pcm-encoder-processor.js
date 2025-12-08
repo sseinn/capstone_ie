@@ -5,7 +5,7 @@ class PcmEncoderProcessor extends AudioWorkletProcessor {
     super();
     // 현재 AudioContext의 샘플레이트 (보통 48000)
     this.inputSampleRate = sampleRate;
-    this.targetSampleRate = 24000;
+    this.targetSampleRate = 16000;
     this.sampleRateRatio = this.inputSampleRate / this.targetSampleRate;
   }
 

@@ -3,59 +3,49 @@ import { useRef } from "react";
 
 export default function usePcmPlayer() {
   const audioContextRef = useRef<AudioContext | null>(null);
-  const lastPlayTimeRef = useRef(0); // 마지막 재생이 끝나는 시간
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
 
-  const ensureAudioContext = () => {
-    if (!audioContextRef.current) {
+  const initAudio = async () => {
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
       audioContextRef.current = new AudioContext({
         sampleRate: 24000
       });
     } else if (audioContextRef.current.state === "suspended") {
-      audioContextRef.current.resume();
+      await audioContextRef.current.resume();
+    }
+
+    const audioCtx = audioContextRef.current;
+
+    // 이미 워크렛이 로드되어 있지 않다면 로드
+    if (!workletNodeRef.current) {
+      try {
+        await audioCtx.audioWorklet.addModule("/pcm-player-processor.js");
+        const node = new AudioWorkletNode(audioCtx, "pcm-player");
+        node.connect(audioCtx.destination);
+        workletNodeRef.current = node;
+      } catch (e) {
+        console.error("❌ PCM Player Worklet 로드 실패:", e);
+      }
     }
   };
 
-  const convertToFloat32 = (buffer: ArrayBuffer) => {
-    const dataView = new DataView(buffer);
-    const float32 = new Float32Array(buffer.byteLength / 2);
+  const enqueue = async (buffer: ArrayBuffer) => {
+    await initAudio(); // 오디오 컨텍스트 및 워크렛 준비
 
-    for (let i = 0; i < float32.length; i++) {
-      float32[i] = dataView.getInt16(i * 2, true) / 0x8000;
+    if (workletNodeRef.current) {
+      // 메인 스레드는 데이터를 오디오 스레드로 "던지기"만 함 (Copy-Free에 가깝게 동작)
+      workletNodeRef.current.port.postMessage(buffer);
     }
-    return float32;
-  };
-
-  const enqueue = (buffer: ArrayBuffer) => {
-    ensureAudioContext();
-
-    const audioCtx = audioContextRef.current!;
-    const pcm = convertToFloat32(buffer);
-
-    // Float32 → AudioBuffer
-    const audioBuffer = audioCtx.createBuffer(1, pcm.length, 24000);
-    audioBuffer.getChannelData(0).set(pcm);
-
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
-
-    // 💡 핵심! 재생 타임라인 안정화
-    const now = audioCtx.currentTime;
-
-    // 오디오가 제때 도착 안 해도 부드럽게 이어지도록
-    const startAt = Math.max(lastPlayTimeRef.current, now);
-
-    source.start(startAt);
-
-    // 다음 재생 시간 갱신
-    lastPlayTimeRef.current = startAt + audioBuffer.duration;
   };
 
   const stop = () => {
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
     if (audioContextRef.current) {
       audioContextRef.current.close();
       audioContextRef.current = null;
-      lastPlayTimeRef.current = 0;
     }
   };
 

@@ -6,7 +6,7 @@ export const useMicStream = (
 ) => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // 🎙️ 마이크 권한 + 잡음 제거 옵션 적용
@@ -34,27 +34,38 @@ export const useMicStream = (
     await initMicPermission();
 
     const stream = mediaStreamRef.current!;
-    console.log("🎙️ Audio streaming started");
+    console.log("🎙️ Audio streaming started (AudioWorklet)");
 
-    audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+    // AudioContext가 없거나 닫혀있으면 새로 생성
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContext();
+    }
     const audioCtx = audioContextRef.current;
 
+    // AudioWorklet 모듈 로드
+    try {
+      await audioCtx.audioWorklet.addModule("/pcm-encoder-processor.js");
+    } catch (e) {
+      console.error("❌ AudioWorklet 모듈 로드 실패:", e);
+      return;
+    }
+
     const source = audioCtx.createMediaStreamSource(stream);
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    // WorkletNode 생성 (이름은 pcm-encoder-processor.js의 registerProcessor 이름과 일치해야 함)
+    const workletNode = new AudioWorkletNode(audioCtx, "pcm-encoder");
 
-    source.connect(processor);
-    processor.connect(audioCtx.destination);
-
-    processor.onaudioprocess = (e) => {
+    workletNode.port.onmessage = (event) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-      const input = e.inputBuffer.getChannelData(0); // Float32Array (24kHz)
-      const pcm16 = floatTo16BitPCM(input);
-
-      wsRef.current.send(pcm16);
+      // Worklet에서 이미 16bit PCM 변환된 버퍼가 옴
+      const pcm16Buffer = event.data;
+      wsRef.current.send(pcm16Buffer);
     };
 
-    processorRef.current = processor;
+    source.connect(workletNode);
+    workletNode.connect(audioCtx.destination);
+
+    workletNodeRef.current = workletNode;
     sourceRef.current = source;
   };
 
@@ -62,7 +73,7 @@ export const useMicStream = (
   const stopStreaming = () => {
     console.log("🛑 Audio streaming stopped");
 
-    processorRef.current?.disconnect();
+    workletNodeRef.current?.disconnect();
     sourceRef.current?.disconnect();
 
     if (audioContextRef.current?.state !== "closed") {
@@ -72,20 +83,6 @@ export const useMicStream = (
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     mediaStreamRef.current = null;
   };
-
-  // 🔉 Float32Array → 16bit PCM 변환
-  function floatTo16BitPCM(float32Array: Float32Array) {
-    const buffer = new ArrayBuffer(float32Array.length * 2);
-    const view = new DataView(buffer);
-
-    let offset = 0;
-    for (let i = 0; i < float32Array.length; i++, offset += 2) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    }
-
-    return buffer;
-  }
 
   // cleanup
   useEffect(() => {
