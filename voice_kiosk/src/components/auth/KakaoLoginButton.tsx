@@ -3,7 +3,7 @@ import kakaoLoginImage from "@/assets/kakao_login_large_narrow.png";
 export default function KakaoLoginButton() {
   const handleKakaoLogin = () => {
     const baseURL = import.meta.env.VITE_API_BASE_URL; // 백엔드 주소
-    const frontendURL = import.meta.env.VITE_FRONTEND_URL; // 프론트 배포 URL
+    const frontendURL = window.location.origin; // 프론트 배포 URL
 
     const redirectUrl = encodeURIComponent(`${frontendURL}/auth/success`);
 
