@@ -1,73 +1,99 @@
 // src/hooks/usePcmPlayer.ts
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 
-const DEFAULT_SAMPLE_RATE = 24000; 
+const DEFAULT_SAMPLE_RATE = 24000;
+const PCM_WORKLET_PATH = "/worklets/pcmProcessor.js";
 
 export default function usePcmPlayer() {
   const audioContextRef = useRef<AudioContext | null>(null);
-  const lastPlayTimeRef = useRef(0);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const isWorkletReadyRef = useRef(false);
+  const pendingQueueRef = useRef<ArrayBuffer[]>([]);
+  const isResumingRef = useRef(false);
 
-  const ensureAudioContext = () => {
+  const ensureAudioContext = async () => {
     if (!audioContextRef.current) {
-      // AudioContext 생성 시 샘플 레이트 설정
       audioContextRef.current = new AudioContext({
         sampleRate: DEFAULT_SAMPLE_RATE,
+        latencyHint: "interactive",
       });
-    } 
-    if (audioContextRef.current.state === "suspended") {
-      // 사용자의 상호작용 후 resume (자동 재생 방지 해결)
+
+      try {
+        await audioContextRef.current.audioWorklet.addModule(PCM_WORKLET_PATH);
+        console.log("✅ PCM Worklet module loaded.");
+
+        const workletNode = new AudioWorkletNode(audioContextRef.current, "pcm-processor", {
+          processorOptions: {
+            targetSampleRate: DEFAULT_SAMPLE_RATE,
+          }
+        });
+        workletNode.connect(audioContextRef.current.destination);
+        workletNodeRef.current = workletNode;
+        isWorkletReadyRef.current = true;
+
+        while (pendingQueueRef.current.length > 0) {
+          const buffer = pendingQueueRef.current.shift();
+          if (buffer) postToWorklet(buffer);
+        }
+
+      } catch (err) {
+        console.error("❌ Failed to load PCM worklet:", err);
+      }
+    }
+
+    // Resume logic with spam protection
+    if (audioContextRef.current.state === "suspended" && !isResumingRef.current) {
+      isResumingRef.current = true;
       audioContextRef.current.resume().then(() => {
-          console.log("🔊 AudioContext Resumed!");
+        console.log("🔊 AudioContext Resumed!");
+        isResumingRef.current = false;
       }).catch(err => {
-          console.error("❌ AudioContext resume error:", err);
+        console.error("❌ AudioContext resume error:", err);
+        isResumingRef.current = false;
       });
     }
   };
 
-  // AudioContext 활성화를 위한 외부 노출 함수 (사용자 상호작용 필요)
   const start = () => {
-      ensureAudioContext();
-  };
-
-  const convertToFloat32 = (buffer: ArrayBuffer) => {
-    const dataView = new DataView(buffer);
-    // 16비트 정수(Int16)를 부동 소수점(Float32)으로 변환
-    const float32 = new Float32Array(buffer.byteLength / 2);
-
-    for (let i = 0; i < float32.length; i++) {
-      // Int16 값을 -1.0 ~ 1.0 범위의 Float32로 정규화
-      float32[i] = dataView.getInt16(i * 2, true) / 0x8000;
-    }
-    return float32;
-  };
-
-  const enqueue = (buffer: ArrayBuffer, sampleRate: number = DEFAULT_SAMPLE_RATE) => {
     ensureAudioContext();
+  };
 
-    const audioCtx = audioContextRef.current!;
-    const pcm = convertToFloat32(buffer);
+  const postToWorklet = (buffer: ArrayBuffer) => {
+    if (workletNodeRef.current && isWorkletReadyRef.current) {
+      // Transferable로 보내거나 복사해서 보냄.
+      // 여기서는 slice로 복사본을 보냄 to be safe (if caller needs original)
+      workletNodeRef.current.port.postMessage(buffer, [buffer]);
+    } else {
+      pendingQueueRef.current.push(buffer);
+    }
+  };
 
-    const audioBuffer = audioCtx.createBuffer(1, pcm.length, sampleRate);
-    audioBuffer.getChannelData(0).set(pcm);
+  const enqueue = (buffer: ArrayBuffer) => {
+    if (!audioContextRef.current || !isWorkletReadyRef.current) {
+      ensureAudioContext();
+    }
 
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
-
-    const now = audioCtx.currentTime;
-    // 이전 오디오가 끝나는 시점 또는 현재 시점 중 늦은 시점에 재생 시작 (큐잉)
-    const startAt = Math.max(lastPlayTimeRef.current, now);
-
-    source.start(startAt);
-    lastPlayTimeRef.current = startAt + audioBuffer.duration;
+    // ArrayBuffer를 안전하게 전송하기 위해 slice (Transferable 사용을 위해 새 버퍼 생성)
+    // 원본 buffer를 그대로 transfer하면 호출자 쪽에서 에러가 날 수 있음 (만약 재사용한다면).
+    // 하지만 보통 WebSocket msg는 1회성이므로 그냥 slice 없이 보내도 되지만,
+    // postToWorklet이 Transferable [buffer]를 쓰므로, 안전하게 slice.
+    const bufferToSend = buffer.slice(0);
+    postToWorklet(bufferToSend);
   };
 
   const stop = () => {
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current.suspend(); 
-      lastPlayTimeRef.current = 0;
+      audioContextRef.current.suspend();
     }
   };
 
-  return { enqueue, stop, start }; 
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
+
+  return { enqueue, stop, start };
 }
