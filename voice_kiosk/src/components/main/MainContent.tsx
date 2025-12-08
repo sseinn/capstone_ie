@@ -5,6 +5,8 @@ import PaymentConfirmation from "./PaymentConfirmation";
 import Completed from "./Completed";
 
 export default function MainContent() {
+  console.log("🔄 MainContent 렌더");
+
   const step = useKioskStore((s) => s.step);
 
   switch (step) {

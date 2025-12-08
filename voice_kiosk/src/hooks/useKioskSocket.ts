@@ -18,7 +18,6 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
 
   const setCart = useKioskStore((s) => s.setCart);
   const setText = useKioskStore((s) => s.setText);
-  const appendText = useKioskStore((s) => s.appendText);
   const setStep = useKioskStore((s) => s.setStep);
   const step = useKioskStore((s) => s.step);
 
@@ -77,13 +76,6 @@ export const useKioskSocket = (storeId: string, connect: boolean) => {
             setServerReady(true);
             break;
 
-          case "OUTPUT_TEXT_CHUNK":
-            if (firstChunkRef.current) {
-              setText("");
-              firstChunkRef.current = false;
-            }
-            appendText(json.content.text);
-            break;
 
           case "OUTPUT_TEXT_RESULT":
             setText(json.content.text);
